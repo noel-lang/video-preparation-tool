@@ -82,3 +82,7 @@ dist/
 .dynamodb/
 
 .wav
+*.wav
+
+.mp4
+*.mp4

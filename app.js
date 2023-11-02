@@ -3,6 +3,7 @@ const ffmpeg = require("fluent-ffmpeg");
 const axios = require("axios");
 const fs = require("fs");
 const FormData = require("form-data");
+const path = require("path");
 
 const videoPath = process.argv[2];
 const outputPath = "output_audio.wav";
@@ -85,10 +86,59 @@ async function downloadFromAuphonic(uuid) {
   outputResponse.data.pipe(writeStream);
 }
 
+function createCopyInOutputDirectory(originalVideoPath, outputDirectory) {
+  console.log(
+    `Kopiere Videodatei [${originalVideoPath}] nach [${outputDirectory}]`
+  );
+
+  const newVideoPath = path.join(
+    outputDirectory,
+    "copy_" + path.basename(originalVideoPath)
+  );
+
+  fs.copyFileSync(originalVideoPath, newVideoPath);
+
+  return newVideoPath;
+}
+
+function replaceAudioInVideo(videoPath, audioPath) {
+  console.log(`Ersetze Audiospur von ${videoPath} mit ${audioPath}`);
+
+  return new Promise((resolve, reject) => {
+    ffmpeg(videoPath)
+      .input(audioPath)
+      .inputOptions(["-hwaccel cuda"])
+      .audioCodec("aac")
+      .toFormat("mp4")
+      .videoFilters("transpose=1")
+      .on("end", resolve)
+      .on("error", reject)
+      .outputOptions("-map 0:v") // Videostream aus erster Eingabedatei
+      .outputOptions("-map 1:a") // Audiostream aus zweiter Eingabedatei
+      .outputOptions("-c:v h264_nvenc")
+      .outputOptions(["-b:v 15000k"]) // 15 Mbps Video Bitrate
+      .outputOptions(["-b:a 256k"]) // 256 kbps Audio Bitrate
+      .save(
+        path.join(path.dirname(videoPath), "final2_" + path.basename(videoPath))
+      );
+  });
+}
+
 // Hauptprozess
-convertToWav(videoPath, async () => {
+/* convertToWav(videoPath, async () => {
   console.log(`Starte Verarbeitung der Datei [${videoPath}]`);
   const uuid = await uploadToAuphonic(outputPath);
   await downloadFromAuphonic(uuid);
   console.log("Datei erfolgreich verarbeitet und heruntergeladen!");
-});
+}); */
+
+const outputDirectory = path.dirname(outputPath); // Der Pfad, in dem final_output.wav gespeichert ist
+const copiedVideoPath = createCopyInOutputDirectory(videoPath, outputDirectory);
+
+replaceAudioInVideo(copiedVideoPath, "final_output.wav")
+  .then(() => {
+    console.log("Audio erfolgreich im Video ersetzt!");
+  })
+  .catch((error) => {
+    console.error("Fehler beim Ersetzen des Audios im Video:", error);
+  });
