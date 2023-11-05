@@ -4,14 +4,14 @@ const axios = require("axios");
 const fs = require("fs");
 const FormData = require("form-data");
 const path = require("path");
+const crypto = require("crypto");
 
 const videoPath = process.argv[2];
-const outputPath = "output_audio.wav";
 
 // Konvertiert das Video zu WAV
-function convertToWav(videoPath, callback) {
+function convertToWav(videoPath, tempId, callback) {
   console.log(`Konvertiere Videodatei [${videoPath}] in eine .WAV-Datei`);
-  ffmpeg(videoPath).toFormat("wav").on("end", callback).save(outputPath);
+  ffmpeg(videoPath).toFormat("wav").on("end", callback).save(`${tempId}.wav`);
 }
 
 // Lädt die WAV-Datei zu Auphonic hoch und startet die Produktion
@@ -46,7 +46,7 @@ async function uploadToAuphonic(filePath) {
 }
 
 // Lädt die verarbeitete Datei von Auphonic herunter
-async function downloadFromAuphonic(uuid) {
+async function downloadFromAuphonic(uuid, tempId) {
   const auphonicUser = process.env.AUPHONIC_USER;
   const auphonicPass = process.env.AUPHONIC_PASS;
   const url = `https://auphonic.com/api/production/${uuid}.json`;
@@ -82,18 +82,22 @@ async function downloadFromAuphonic(uuid) {
     },
   });
 
-  const writeStream = fs.createWriteStream("final_output.wav");
+  const writeStream = fs.createWriteStream(`processed_${tempId}.wav`);
   outputResponse.data.pipe(writeStream);
 }
 
-function createCopyInOutputDirectory(originalVideoPath, outputDirectory) {
+function createCopyInOutputDirectory(
+  originalVideoPath,
+  outputDirectory,
+  tempId
+) {
   console.log(
     `Kopiere Videodatei [${originalVideoPath}] nach [${outputDirectory}]`
   );
 
   const newVideoPath = path.join(
     outputDirectory,
-    "copy_" + path.basename(originalVideoPath)
+    "copy_" + tempId + "_" + path.basename(originalVideoPath)
   );
 
   fs.copyFileSync(originalVideoPath, newVideoPath);
@@ -119,26 +123,34 @@ function replaceAudioInVideo(videoPath, audioPath) {
       .outputOptions(["-b:v 15000k"]) // 15 Mbps Video Bitrate
       .outputOptions(["-b:a 256k"]) // 256 kbps Audio Bitrate
       .save(
-        path.join(path.dirname(videoPath), "final2_" + path.basename(videoPath))
+        path.join(path.dirname(videoPath), "final_" + path.basename(videoPath))
       );
   });
 }
 
-// Hauptprozess
-/* convertToWav(videoPath, async () => {
-  console.log(`Starte Verarbeitung der Datei [${videoPath}]`);
-  const uuid = await uploadToAuphonic(outputPath);
-  await downloadFromAuphonic(uuid);
+const tempId = crypto.randomBytes(3 * 4).toString("base64");
+
+convertToWav(videoPath, tempId, async () => {
+  console.log(
+    `Starte Verarbeitung der Datei [${videoPath}] -> [${tempId}.wav]`
+  );
+  const uuid = await uploadToAuphonic(`${tempId}.wav`);
+
+  await downloadFromAuphonic(uuid, tempId);
   console.log("Datei erfolgreich verarbeitet und heruntergeladen!");
-}); */
 
-const outputDirectory = path.dirname(outputPath); // Der Pfad, in dem final_output.wav gespeichert ist
-const copiedVideoPath = createCopyInOutputDirectory(videoPath, outputDirectory);
+  const outputDirectory = path.dirname(`${tempId}.wav`);
+  const copiedVideoPath = createCopyInOutputDirectory(
+    videoPath,
+    outputDirectory,
+    tempId
+  );
 
-replaceAudioInVideo(copiedVideoPath, "final_output.wav")
-  .then(() => {
-    console.log("Audio erfolgreich im Video ersetzt!");
-  })
-  .catch((error) => {
-    console.error("Fehler beim Ersetzen des Audios im Video:", error);
-  });
+  replaceAudioInVideo(copiedVideoPath, `processed_${tempId}.wav`)
+    .then(() => {
+      console.log("Audio erfolgreich im Video ersetzt!");
+    })
+    .catch((error) => {
+      console.error("Fehler beim Ersetzen des Audios im Video:", error);
+    });
+});
